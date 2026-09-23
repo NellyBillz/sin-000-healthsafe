@@ -2,15 +2,38 @@ package co.wethinkcode.healthsafe;
 
 import io.javalin.Javalin;
 
+import java.net.URI;
+
 public class WardServiceApp {
 
-    public static void main(String[] args) {
-        Javalin app = Javalin.create().start(7031);
+    private static final String DEFAULT_INGESTION_URL = "http://localhost:7030";
 
+    public static void main(String[] args) throws Exception {
+        String ingestionUrl = System.getenv().getOrDefault(
+                "INGESTION_SERVICE_URL", DEFAULT_INGESTION_URL);
+        WardDirectory directory = new WardDirectory(
+                new IngestionClient(URI.create(ingestionUrl)).fetchWards());
+
+        createApp(directory).start(7031);
+    }
+
+    static Javalin createApp(WardDirectory directory) {
+        Javalin app = Javalin.create();
         app.get("/health", ctx -> ctx.result("OK"));
 
-        // TODO (Provides lists of wards and departments.)
-        // Add domain endpoints for ward-service here.
+        app.get("/wards", ctx -> ctx.json(directory.wards()));
+
+        app.get("/wards/{id}", ctx -> directory.find(ctx.pathParam("id"))
+                .ifPresentOrElse(
+                        ctx::json,
+                        () -> ctx.status(404).json(new ErrorResponse("Unknown ward"))));
+
+        app.get("/departments", ctx -> ctx.json(directory.departments()));
+
+        return app;
+    }
+
+    record ErrorResponse(String error) {
     }
 }
 
