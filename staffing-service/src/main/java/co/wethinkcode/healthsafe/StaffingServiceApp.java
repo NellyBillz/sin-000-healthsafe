@@ -2,6 +2,8 @@ package co.wethinkcode.healthsafe;
 
 import io.javalin.Javalin;
 
+import co.wethinkcode.healthsafe.mq.MqConfig;
+
 import java.net.URI;
 import java.util.List;
 
@@ -14,11 +16,16 @@ public class StaffingServiceApp {
         HospitalServiceClient client = new HospitalServiceClient(
                 URI.create(System.getenv().getOrDefault("WARD_SERVICE_URL", DEFAULT_WARD_URL)),
                 URI.create(System.getenv().getOrDefault("ALERT_LEVEL_SERVICE_URL", DEFAULT_ALERT_URL)));
+        StaffingEventPublisher publisher = new StaffingEventPublisher(
+                MqConfig.BROKER_URL, MqConfig.TOPIC);
 
-        createApp(client, new StaffingPlanner()).start(7033);
+        createApp(client, new StaffingPlanner(), publisher).start(7033);
     }
 
-    static Javalin createApp(HospitalServiceClient client, StaffingPlanner planner) {
+    static Javalin createApp(
+            HospitalServiceClient client,
+            StaffingPlanner planner,
+            StaffingEventPublisher publisher) {
         Javalin app = Javalin.create();
         app.get("/health", ctx -> ctx.result("OK"));
 
@@ -41,13 +48,22 @@ public class StaffingServiceApp {
 
                 int alertLevel = client.fetchAlertLevel();
                 StaffingPlanner.Plan plan = planner.plan(request.doctors(), alertLevel);
-                ctx.json(new ScheduleResponse(
+                StaffingEvent event = new StaffingEvent(
                         request.wardId().trim().toUpperCase(),
                         alertLevel,
                         plan.requiredDoctors(),
                         plan.assignedDoctors(),
-                        plan.understaffed()));
+                        plan.understaffed());
+                publisher.publish(event);
+                ctx.json(new ScheduleResponse(
+                        event.wardId(),
+                        event.alertLevel(),
+                        event.requiredDoctors(),
+                        event.assignedDoctors(),
+                        event.understaffed()));
             } catch (DownstreamServiceException exception) {
+                ctx.status(503).json(new ErrorResponse(exception.getMessage()));
+            } catch (StaffingEventException exception) {
                 ctx.status(503).json(new ErrorResponse(exception.getMessage()));
             }
         });

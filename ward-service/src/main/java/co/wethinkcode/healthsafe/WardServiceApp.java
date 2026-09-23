@@ -2,6 +2,8 @@ package co.wethinkcode.healthsafe;
 
 import io.javalin.Javalin;
 
+import co.wethinkcode.healthsafe.mq.MqConfig;
+
 import java.net.URI;
 
 public class WardServiceApp {
@@ -13,11 +15,14 @@ public class WardServiceApp {
                 "INGESTION_SERVICE_URL", DEFAULT_INGESTION_URL);
         WardDirectory directory = new WardDirectory(
                 new IngestionClient(URI.create(ingestionUrl)).fetchWards());
+        StaffingEventSubscriber subscriber = new StaffingEventSubscriber(
+                MqConfig.BROKER_URL, MqConfig.TOPIC);
+        subscriber.start();
 
-        createApp(directory).start(7031);
+        createApp(directory, subscriber).start(7031);
     }
 
-    static Javalin createApp(WardDirectory directory) {
+    static Javalin createApp(WardDirectory directory, StaffingEventSubscriber subscriber) {
         Javalin app = Javalin.create();
         app.get("/health", ctx -> ctx.result("OK"));
 
@@ -29,6 +34,7 @@ public class WardServiceApp {
                         () -> ctx.status(404).json(new ErrorResponse("Unknown ward"))));
 
         app.get("/departments", ctx -> ctx.json(directory.departments()));
+        app.get("/staffing-events", ctx -> ctx.json(subscriber.receivedEvents()));
 
         return app;
     }
