@@ -18,11 +18,14 @@ public class WardServiceApp {
         StaffingEventSubscriber subscriber = new StaffingEventSubscriber(
                 MqConfig.BROKER_URL, MqConfig.TOPIC);
         subscriber.start();
+        EquipmentFailurePublisher equipmentPublisher = new EquipmentFailurePublisher(
+                MqConfig.BROKER_URL, MqConfig.QUEUE);
 
-        createApp(directory, subscriber).start(7031);
+        createApp(directory, subscriber, equipmentPublisher).start(7031);
     }
 
-    static Javalin createApp(WardDirectory directory, StaffingEventSubscriber subscriber) {
+    static Javalin createApp(WardDirectory directory, StaffingEventSubscriber subscriber,
+                             EquipmentFailurePublisher equipmentPublisher) {
         Javalin app = Javalin.create();
         app.get("/health", ctx -> ctx.result("OK"));
 
@@ -35,13 +38,37 @@ public class WardServiceApp {
 
         app.get("/departments", ctx -> ctx.json(directory.departments()));
         app.get("/staffing-events", ctx -> ctx.json(subscriber.receivedEvents()));
+        app.post("/equipment-failures", ctx -> {
+            try {
+                EquipmentFailureRequest request = ctx.bodyAsClass(EquipmentFailureRequest.class);
+                if (request.wardId() == null || request.wardId().isBlank()
+                        || request.equipment() == null || request.equipment().isBlank()) {
+                    ctx.status(400).json(new ErrorResponse("wardId and equipment are required"));
+                    return;
+                }
+                if (directory.find(request.wardId()).isEmpty()) {
+                    ctx.status(404).json(new ErrorResponse("Unknown ward"));
+                    return;
+                }
+                EquipmentFailureEvent event = EquipmentFailureEvent.create(
+                        request.wardId(), request.equipment(), request.details());
+                equipmentPublisher.publish(event);
+                ctx.status(202).json(event);
+            } catch (EquipmentFailurePublishException exception) {
+                ctx.status(503).json(new ErrorResponse("Equipment alert queue unavailable"));
+            } catch (Exception exception) {
+                ctx.status(400).json(new ErrorResponse("Invalid equipment failure request"));
+            }
+        });
 
         return app;
     }
 
     record ErrorResponse(String error) {
     }
+
+    record EquipmentFailureRequest(String wardId, String equipment, String details) {
+    }
 }
 
 // MQ TODO: subscribes to ActiveMQ topic MqConfig.TOPIC at MqConfig.BROKER_URL (see co.wethinkcode.healthsafe.mq.MqConfig)
-// MQ TODO: publishes to ActiveMQ queue MqConfig.QUEUE when it detects an equipment failure on one of its wards.

@@ -1,18 +1,19 @@
 package co.wethinkcode.healthsafe;
 
 import io.javalin.Javalin;
+import co.wethinkcode.healthsafe.mq.MqConfig;
 
 public class EquipmentAlertServiceApp {
 
-    public static void main(String[] args) {
-        Javalin app = Javalin.create().start(7034);
+    public static void main(String[] args) throws Exception {
+        EquipmentAlertStore store = new EquipmentAlertStore();
+        EquipmentFailureConsumer consumer = new EquipmentFailureConsumer(
+                MqConfig.BROKER_URL, MqConfig.QUEUE, store);
+        consumer.start();
 
+        Javalin app = Javalin.create();
         app.get("/health", ctx -> ctx.result("OK"));
-
-        // TODO (Uses a Queue to guarantee delivery of critical medical equipment failure alerts.)
-        // Mechanism: ActiveMQ Queue (guaranteed delivery)
+        app.get("/equipment-alerts", ctx -> ctx.json(store.alerts()));
+        app.start(7034);
     }
 }
-
-// MQ TODO: consumes ActiveMQ queue MqConfig.QUEUE at MqConfig.BROKER_URL (see co.wethinkcode.healthsafe.mq.MqConfig)
-// Producer: ward-service publishes here when it detects an equipment failure on one of its wards.
